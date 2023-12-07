@@ -1,9 +1,11 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -11,6 +13,12 @@ import (
 type pod struct {
 	stage string
 	value int
+}
+
+type podRange struct {
+	stage    string
+	valStart int
+	valEnd   int
 }
 
 type transformer struct {
@@ -40,6 +48,129 @@ func main() {
 		}
 	}
 	fmt.Println(answer1)
+	t2, p2 := loadData2()
+	var answer2 int
+	for len(p2) != 0 {
+		for p2[0].stage != "location" {
+			currentCharts := t2[p2[0].stage].chart
+			fmt.Println(p2[0])
+			for cp, pp := 0, p2[0].valStart; pp < p2[0].valEnd; {
+				cc := currentCharts[cp]
+				if pp > cc.end {
+					cp += 1
+					if cp == len(currentCharts) {
+						// fmt.Println("skipping ", p2[0])
+						p2[0].stage = t2[p2[0].stage].outputType
+						break
+					}
+					continue
+				}
+
+				np := podRange{}
+
+				//Starts outside of map, No change is value
+				if pp < cc.begin {
+					np.valStart = pp
+					//Entire range is outside map
+					if p2[0].valEnd < cc.begin {
+						fmt.Println("before map", p2[0])
+						np.valEnd = p2[0].valEnd
+						np.stage = t2[p2[0].stage].outputType
+						p2[0] = np
+						break
+					} else { //Extends into map, create split
+						np = podRange{valStart: pp, valEnd: cc.begin - 1, stage: t2[p2[0].stage].outputType}
+						p2 = append(p2, np)
+						p2[0].stage = t2[p2[0].stage].outputType
+						p2[0].valStart = cc.begin
+						pp = cc.begin
+					}
+				} else { //Starts in map
+					//Entire range is in map
+					if p2[0].valEnd <= cc.end {
+						np = podRange{valStart: pp - cc.diff, valEnd: p2[0].valEnd - cc.diff, stage: t2[p2[0].stage].outputType}
+						p2[0] = np
+						break
+					} else { //Extends out of map, create split
+						np = podRange{valStart: pp - cc.diff, valEnd: cc.end - cc.diff, stage: t2[p2[0].stage].outputType}
+						p2 = append(p2, np)
+						p2[0].valStart = cc.end + 1
+						pp = cc.end + 1
+					}
+				}
+			}
+		}
+		if p2[0].valStart < answer2 || answer2 == 0 {
+			answer2 = p2[0].valStart
+		}
+		fmt.Println(p2[0])
+		p2 = p2[1:]
+	}
+	fmt.Println("Answer 2 ", answer2)
+}
+
+func loadData2() (map[string]transformer, []podRange) {
+	file, err := os.ReadFile("input.txt")
+	if err != nil {
+		panic(err)
+	}
+
+	lines := strings.Split(string(file), "\n")
+
+	var pods []podRange
+	start := strings.Split(lines[0], " ")
+	startType := start[0][:len(start[0])-2]
+	start = start[1:]
+	for i := 0; i < len(start); i += 2 {
+		valStart, _ := strconv.Atoi(start[i])
+		valRange, _ := strconv.Atoi(start[i+1])
+		pods = append(pods, podRange{stage: startType, valStart: valStart, valEnd: valStart + valRange - 1})
+	}
+
+	fmt.Println(pods)
+
+	transformers := make(map[string]transformer)
+
+	typeRegex := regexp.MustCompile("([A-Za-z]+)-to-([A-Za-z]+) map:")
+	dataRegex := regexp.MustCompile(`(\d+) (\d+) (\d+)`)
+
+	currentKey := ""
+	var currentCharts []Chart
+	var currentTransformer transformer
+	for i := 2; i < len(lines); i++ {
+		data := dataRegex.FindStringSubmatch(lines[i])
+		if data != nil {
+			rng, _ := strconv.Atoi(data[3])
+			source, _ := strconv.Atoi(data[2])
+			target, _ := strconv.Atoi(data[1])
+			currentCharts = append(currentCharts, Chart{begin: source, end: source + rng - 1, diff: source - target})
+		} else {
+			if len(currentCharts) > 0 {
+				slices.SortFunc(currentCharts, func(a, b Chart) int {
+					return cmp.Compare(a.begin, b.begin)
+				})
+				currentTransformer.chart = currentCharts
+				transformers[currentKey] = currentTransformer
+				currentCharts = []Chart{}
+			}
+		}
+		mapping := typeRegex.FindStringSubmatch(lines[i])
+		if mapping != nil {
+			fmt.Println("new map ", mapping[0])
+			currentKey = mapping[1]
+			currentTransformer = transformer{inputType: mapping[1], outputType: mapping[2], chart: make([]Chart, 0)}
+		}
+	}
+	if len(currentCharts) > 0 {
+		slices.SortFunc(currentCharts, func(a, b Chart) int {
+			return cmp.Compare(a.begin, b.begin)
+		})
+		currentTransformer.chart = currentCharts
+		transformers[currentKey] = currentTransformer
+		currentCharts = []Chart{}
+	}
+	// fmt.Println(transformers)
+	return transformers, pods
 }
 
 func loadData() (*map[string]transformer, []pod) {
